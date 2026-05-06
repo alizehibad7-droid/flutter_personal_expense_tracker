@@ -1,84 +1,56 @@
-// lib/models/category_model.dart
-
 import 'package:flutter/material.dart';
 
-// A simple plain Dart class (PODO - Plain Old Dart Object)
-// No Hive annotations needed since categories are mostly predefined
-// We store custom categories as a List<String> in a separate Hive box
 class CategoryModel {
   final String name;
   final IconData icon;
   final Color color;
+  final bool isExpense; // true = expense category, false = income category
 
   const CategoryModel({
     required this.name,
     required this.icon,
     required this.color,
+    required this.isExpense,
   });
 }
 
-// Static list of predefined categories
-// 'static' means it belongs to the CLASS, not to any instance
-// 'const' means compile-time constant - never changes at runtime
-class AppCategories {
-  static const List<CategoryModel> predefined = [
-    CategoryModel(
-      name: 'Food',
-      icon: Icons.restaurant,
-      color: Color(0xFFFF6B6B),
-    ),
-    CategoryModel(
-      name: 'Travel',
-      icon: Icons.flight,
-      color: Color(0xFF4ECDC4),
-    ),
-    CategoryModel(
-      name: 'Bills',
-      icon: Icons.receipt_long,
-      color: Color(0xFFFFE66D),
-    ),
-    CategoryModel(
-      name: 'Shopping',
-      icon: Icons.shopping_bag,
-      color: Color(0xFF95E1D3),
-    ),
-    CategoryModel(
-      name: 'Health',
-      icon: Icons.local_hospital,
-      color: Color(0xFFF38181),
-    ),
-    CategoryModel(
-      name: 'Entertainment',
-      icon: Icons.movie,
-      color: Color(0xFFA8E6CF),
-    ),
-    CategoryModel(
-      name: 'Education',
-      icon: Icons.school,
-      color: Color(0xFFDDA0DD),
-    ),
-    CategoryModel(
-      name: 'Other',
-      icon: Icons.more_horiz,
-      color: Color(0xFFB0BEC5),
-    ),
-  ];
+// ─── EXPENSE CATEGORIES ───────────────────────────────────────────────────────
+const List<CategoryModel> expenseCategories = [
+  CategoryModel(name: 'Food', icon: Icons.restaurant, color: Color(0xFFFF6B6B), isExpense: true),
+  CategoryModel(name: 'Travel', icon: Icons.directions_car, color: Color(0xFF4ECDC4), isExpense: true),
+  CategoryModel(name: 'Bills', icon: Icons.receipt_long, color: Color(0xFFFFBE0B), isExpense: true),
+  CategoryModel(name: 'Shopping', icon: Icons.shopping_bag, color: Color(0xFF845EC2), isExpense: true),
+  CategoryModel(name: 'Health', icon: Icons.local_hospital, color: Color(0xFFFF9671), isExpense: true),
+  CategoryModel(name: 'Education', icon: Icons.school, color: Color(0xFF00C9A7), isExpense: true),
+  CategoryModel(name: 'Entertainment', icon: Icons.movie, color: Color(0xFFF9C74F), isExpense: true),
+  CategoryModel(name: 'Rent', icon: Icons.home, color: Color(0xFF4D96FF), isExpense: true),
+  CategoryModel(name: 'Other', icon: Icons.category, color: Color(0xFF9B9B9B), isExpense: true),
+];
 
-  // Helper method to find a category by name
-  static CategoryModel getByName(String name) {
-    return predefined.firstWhere(
-          (cat) => cat.name == name,
-      orElse: () => const CategoryModel(
-        name: 'Other',
-        icon: Icons.more_horiz,
-        color: Color(0xFFB0BEC5),
-      ),
-    );
-  }
+// ─── INCOME CATEGORIES ────────────────────────────────────────────────────────
+const List<CategoryModel> incomeCategories = [
+  CategoryModel(name: 'Salary', icon: Icons.work, color: Color(0xFF06D6A0), isExpense: false),
+  CategoryModel(name: 'Freelance', icon: Icons.computer, color: Color(0xFF118AB2), isExpense: false),
+  CategoryModel(name: 'Business', icon: Icons.store, color: Color(0xFF073B4C), isExpense: false),
+  CategoryModel(name: 'Gift', icon: Icons.card_giftcard, color: Color(0xFFEF476F), isExpense: false),
+  CategoryModel(name: 'Investment', icon: Icons.trending_up, color: Color(0xFF26A65B), isExpense: false),
+  CategoryModel(name: 'Rental', icon: Icons.apartment, color: Color(0xFF3D5A80), isExpense: false),
+  CategoryModel(name: 'Other', icon: Icons.category, color: Color(0xFF9B9B9B), isExpense: false),
+];
 
-  // Get icon for a category name (used in UI)
-  static IconData getIcon(String name) => getByName(name).icon;
-
-  // Get color for a category name
-  static Color getColor(String name) => getByName(name).color;
+// ─── HELPER: get categories by type ──────────────────────────────────────────
+List<CategoryModel> getCategoriesForType(bool isExpense) {
+  return isExpense ? expenseCategories : incomeCategories;
 }
+
+// ─── HELPER: get a single category by name ───────────────────────────────────
+CategoryModel getCategoryByName(String name, bool isExpense) {
+  final list = getCategoriesForType(isExpense);
+  return list.firstWhere(
+        (c) => c.name == name,
+    orElse: () => isExpense ? expenseCategories.last : incomeCategories.last,
+  );
+}
+
+// ─── ALL categories combined (for charts) ────────────────────────────────────
+List<CategoryModel> get allCategories => [...expenseCategories, ...incomeCategories];

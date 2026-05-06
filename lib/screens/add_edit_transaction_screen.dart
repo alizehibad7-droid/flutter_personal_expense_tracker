@@ -1,5 +1,3 @@
-// lib/screens/add_edit_transaction_screen.dart
-
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
@@ -8,306 +6,238 @@ import '../models/category_model.dart';
 import '../providers/transaction_provider.dart';
 import '../utils/app_theme.dart';
 
-// StatefulWidget because this screen has LOCAL state (form fields, selected date, etc.)
-// The data changes within this screen before being saved
 class AddEditTransactionScreen extends StatefulWidget {
-  // Optional parameter - null means "Add mode", non-null means "Edit mode"
-  // This is the "nullable type" pattern in Dart: TransactionModel?
-  final TransactionModel? transaction;
+  final TransactionModel? transaction; // null = add mode, non-null = edit mode
+  final bool? initialIsExpense; // pre-set type (from quick buttons)
 
-  const AddEditTransactionScreen({super.key, this.transaction});
+  const AddEditTransactionScreen({
+    super.key,
+    this.transaction,
+    this.initialIsExpense,
+  });
 
   @override
   State<AddEditTransactionScreen> createState() =>
       _AddEditTransactionScreenState();
 }
 
-// The State class holds the mutable state for AddEditTransactionScreen
-// It starts with _ to indicate it's private (only used by its widget)
 class _AddEditTransactionScreenState extends State<AddEditTransactionScreen> {
-  // GlobalKey<FormState> is used to validate and save the form
-  // Think of it as a "handle" to control the Form widget from outside
+  // Form key — used to validate all fields at once
   final _formKey = GlobalKey<FormState>();
 
-  // TextEditingController connects a TextField to code
-  // It lets you read the typed text, clear it, or set it programmatically
-  final _titleController = TextEditingController();
-  final _amountController = TextEditingController();
-  final _noteController = TextEditingController();
+  // Controllers — manage the text inside each TextFormField
+  late TextEditingController _titleController;
+  late TextEditingController _amountController;
+  late TextEditingController _noteController;
 
-  // Local state variables
-  String _selectedCategory = 'Food';
-  DateTime _selectedDate = DateTime.now();
-  bool _isExpense = true; // defaults to expense
-  bool _isLoading = false;
+  // State variables
+  late bool _isExpense;
+  late String _selectedCategory;
+  late DateTime _selectedDate;
 
-  // initState() is called ONCE when the widget is first inserted into the tree
-  // Perfect for one-time setup like pre-filling edit form data
+  bool get isEditMode => widget.transaction != null;
+
   @override
   void initState() {
     super.initState(); // Always call super first
 
-    // If a transaction was passed in, we're in EDIT mode
-    // widget.transaction accesses the parent StatefulWidget's properties
-    if (widget.transaction != null) {
-      final t = widget.transaction!; // ! asserts non-null (safe here since we checked)
-      _titleController.text = t.title;
-      _amountController.text = t.amount.toString();
-      _noteController.text = t.note;
-      _selectedCategory = t.category;
-      _selectedDate = t.date;
-      _isExpense = t.isExpense;
-    }
+    // If editing, pre-fill fields with existing data
+    // If adding, use defaults
+    final t = widget.transaction;
+    _isExpense = t?.isExpense ?? widget.initialIsExpense ?? true;
+    _titleController = TextEditingController(text: t?.title ?? '');
+    _amountController =
+        TextEditingController(text: t != null ? t.amount.toString() : '');
+    _noteController = TextEditingController(text: t?.note ?? '');
+    _selectedDate = t?.date ?? DateTime.now();
+
+    // Set default category based on type
+    final cats = getCategoriesForType(_isExpense);
+    _selectedCategory = t?.category ?? cats.first.name;
   }
 
-  // dispose() is called when this widget is permanently removed from the tree
-  // ALWAYS dispose controllers to prevent memory leaks!
   @override
   void dispose() {
+    // Always dispose controllers to free memory
     _titleController.dispose();
     _amountController.dispose();
     _noteController.dispose();
-    super.dispose(); // Always call super last in dispose
+    super.dispose(); // Always call super last
   }
 
-  // Show date picker and update state
-  Future<void> _pickDate() async {
-    // showDatePicker is a built-in Flutter dialog
-    // It returns a Future<DateTime?> - might be null if user cancels
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: _selectedDate,
-      firstDate: DateTime(2020),
-      lastDate: DateTime.now(),
-      builder: (context, child) {
-        // Wrap with Theme to customize the picker appearance
-        return Theme(
-          data: ThemeData.dark().copyWith(
-            colorScheme: const ColorScheme.dark(primary: AppTheme.primary),
-          ),
-          child: child!,
-        );
-      },
-    );
-
-    // Only update if user didn't cancel (null check)
-    if (picked != null) {
-      // setState() tells Flutter this widget's state changed -> rebuild UI
-      setState(() => _selectedDate = picked);
-    }
+  // ─── When type toggle changes ──────────────────────────────────────────────
+  void _onTypeChanged(bool isExpense) {
+    setState(() {
+      _isExpense = isExpense;
+      // Reset category to match new type
+      _selectedCategory = getCategoriesForType(isExpense).first.name;
+    });
   }
 
-  // Confirm and delete this transaction (Edit mode only)
-  Future<void> _confirmDelete() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.card,
-        title: const Text(
-          'Delete Transaction',
-          style: TextStyle(color: AppTheme.textPrimary),
-        ),
-        content: Text(
-          'Are you sure you want to delete "${_titleController.text}"? This cannot be undone.',
-          style: const TextStyle(color: AppTheme.textSecondary),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false), // Cancel
-            child: const Text('Cancel', style: TextStyle(color: AppTheme.textSecondary)),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true), // Confirm
-            child: const Text('Delete', style: TextStyle(color: AppTheme.danger)),
-          ),
-        ],
-      ),
-    );
+  // ─── Theme colors based on type ───────────────────────────────────────────
+  Color get _accentColor =>
+      _isExpense ? AppTheme.expenseRed : AppTheme.incomeGreen;
 
-    if (confirmed == true && mounted) {
-      await context.read<TransactionProvider>().deleteTransaction(widget.transaction!.id);
-      // Pop back to home screen after deletion
-      if (mounted) Navigator.pop(context);
-    }
-  }
-
-  // Save transaction (handles both Add and Edit)
-  Future<void> _save() async {
-    // _formKey.currentState!.validate() triggers validators on all form fields
-    // Returns true only if ALL validators pass
-    if (!_formKey.currentState!.validate()) return;
-
-    setState(() => _isLoading = true);
-
-    // context.read<T>() gets the Provider without listening to changes
-    // (vs context.watch<T>() which rebuilds when data changes)
-    // Use read() in callbacks/actions, watch() in build()
-    final provider = context.read<TransactionProvider>();
-
-    try {
-      if (widget.transaction == null) {
-        // ADD mode
-        await provider.addTransaction(
-          title: _titleController.text.trim(),
-          amount: double.parse(_amountController.text),
-          category: _selectedCategory,
-          date: _selectedDate,
-          isExpense: _isExpense,
-          note: _noteController.text.trim(),
-        );
-      } else {
-        // EDIT mode
-        await provider.updateTransaction(
-          id: widget.transaction!.id,
-          title: _titleController.text.trim(),
-          amount: double.parse(_amountController.text),
-          category: _selectedCategory,
-          date: _selectedDate,
-          isExpense: _isExpense,
-          note: _noteController.text.trim(),
-        );
-      }
-
-      // Navigator.pop() closes the current screen and goes back
-      // mounted check prevents using context after widget is disposed
-      if (mounted) Navigator.pop(context);
-    } catch (e) {
-      setState(() => _isLoading = false);
-      // Show error snackbar
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: AppTheme.danger),
-        );
-      }
-    }
-  }
-
+  // ─── BUILD ────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
-    // Check if we're in edit mode for UI customization
-    final isEditMode = widget.transaction != null;
+    final provider = context.watch<TransactionProvider>();
+    final categoryNames = provider.getCategoryNames(_isExpense);
+
+    // Ensure selected category exists in list, else reset
+    if (!categoryNames.contains(_selectedCategory)) {
+      _selectedCategory = categoryNames.first;
+    }
 
     return Scaffold(
-      backgroundColor: AppTheme.background,
+      backgroundColor: AppTheme.bgDark,
       appBar: AppBar(
         title: Text(isEditMode ? 'Edit Transaction' : 'Add Transaction'),
+        backgroundColor: AppTheme.bgDark,
+        leading: IconButton(
+          icon: const Icon(Icons.close),
+          onPressed: () => Navigator.pop(context),
+        ),
+        actions: [
+          if (isEditMode)
+            IconButton(
+              icon: const Icon(Icons.delete_outline, color: AppTheme.expenseRed),
+              tooltip: 'Delete',
+              onPressed: _confirmDelete,
+            ),
+        ],
       ),
       body: SingleChildScrollView(
-        // SingleChildScrollView allows the content to scroll if it overflows
         padding: const EdgeInsets.all(20),
         child: Form(
-          // Form widget groups multiple TextFormFields
-          // Assigning _formKey links this Form to our GlobalKey
           key: _formKey,
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // ── TYPE TOGGLE (Income / Expense) ──────────────────────────
+              // ── TYPE TOGGLE ──────────────────────────────────────────────
               _buildTypeToggle(),
+              const SizedBox(height: 24),
+
+              // ── AMOUNT ───────────────────────────────────────────────────
+              _buildSectionLabel('Amount'),
+              const SizedBox(height: 8),
+              TextFormField(
+                controller: _amountController,
+                keyboardType:
+                const TextInputType.numberWithOptions(decimal: true),
+                style: TextStyle(
+                  color: _accentColor,
+                  fontSize: 28,
+                  fontWeight: FontWeight.w800,
+                ),
+                decoration: InputDecoration(
+                  hintText: '0.00',
+                  prefixText: 'PKR  ',
+                  prefixStyle:
+                  const TextStyle(color: AppTheme.textSecond, fontSize: 16),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: _accentColor, width: 2),
+                  ),
+                ),
+                validator: (val) {
+                  if (val == null || val.trim().isEmpty) return 'Enter amount';
+                  final parsed = double.tryParse(val.trim());
+                  if (parsed == null || parsed <= 0) return 'Enter a valid amount';
+                  return null; // null = valid
+                },
+              ),
               const SizedBox(height: 20),
 
-              // ── TITLE FIELD ──────────────────────────────────────────────
+              // ── TITLE ────────────────────────────────────────────────────
+              _buildSectionLabel('Title'),
+              const SizedBox(height: 8),
               TextFormField(
                 controller: _titleController,
                 style: const TextStyle(color: AppTheme.textPrimary),
                 decoration: const InputDecoration(
-                  labelText: 'Title',
-                  hintText: 'e.g. Grocery Shopping',
-                  prefixIcon: Icon(Icons.title),
+                  hintText: 'e.g. Lunch at restaurant',
+                  prefixIcon: Icon(Icons.title, color: AppTheme.textSecond),
                 ),
-                // validator is called when form.validate() is triggered
-                // Return null = valid, return String = error message
-                validator: (value) {
-                  if (value == null || value.trim().isEmpty) {
-                    return 'Please enter a title';
-                  }
-                  return null; // null means valid
-                },
-              ),
-              const SizedBox(height: 16),
-
-              // ── AMOUNT FIELD ─────────────────────────────────────────────
-              TextFormField(
-                controller: _amountController,
-                style: const TextStyle(color: AppTheme.textPrimary),
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                decoration: const InputDecoration(
-                  labelText: 'Amount (PKR)',
-                  hintText: '0.00',
-                  prefixIcon: Icon(Icons.attach_money),
-                ),
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Please enter an amount';
-                  }
-                  // double.tryParse returns null if parsing fails
-                  final amount = double.tryParse(value);
-                  if (amount == null || amount <= 0) {
-                    return 'Please enter a valid amount';
-                  }
+                validator: (val) {
+                  if (val == null || val.trim().isEmpty) return 'Enter a title';
                   return null;
                 },
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 20),
 
-              // ── CATEGORY SELECTOR ────────────────────────────────────────
-              _buildCategorySelector(),
-              const SizedBox(height: 16),
+              // ── CATEGORY ─────────────────────────────────────────────────
+              _buildSectionLabel('Category'),
+              const SizedBox(height: 8),
+              _buildCategoryGrid(categoryNames),
+              const SizedBox(height: 8),
+              _buildAddCustomCategoryButton(context),
+              const SizedBox(height: 20),
 
-              // ── DATE PICKER ──────────────────────────────────────────────
-              _buildDatePicker(),
-              const SizedBox(height: 16),
+              // ── DATE ─────────────────────────────────────────────────────
+              _buildSectionLabel('Date'),
+              const SizedBox(height: 8),
+              _buildDatePicker(context),
+              const SizedBox(height: 20),
 
-              // ── NOTE FIELD ───────────────────────────────────────────────
+              // ── NOTE ─────────────────────────────────────────────────────
+              _buildSectionLabel('Note (Optional)'),
+              const SizedBox(height: 8),
               TextFormField(
                 controller: _noteController,
                 style: const TextStyle(color: AppTheme.textPrimary),
-                maxLines: 3, // Multi-line input
+                maxLines: 3,
                 decoration: const InputDecoration(
-                  labelText: 'Note (Optional)',
                   hintText: 'Add a note...',
-                  prefixIcon: Icon(Icons.note),
-                  alignLabelWithHint: true,
+                  prefixIcon: Padding(
+                    padding: EdgeInsets.only(bottom: 48),
+                    child: Icon(Icons.note_alt_outlined,
+                        color: AppTheme.textSecond),
+                  ),
                 ),
               ),
-              const SizedBox(height: 28),
+              const SizedBox(height: 32),
 
-              // ── SAVE BUTTON ──────────────────────────────────────────────
+              // ── SAVE BUTTON ───────────────────────────────────────────────
               ElevatedButton(
-                onPressed: _isLoading ? null : _save,
-                // Ternary operator: condition ? valueIfTrue : valueIfFalse
-                child: _isLoading
-                    ? const SizedBox(
-                  height: 20,
-                  width: 20,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: Colors.white,
+                onPressed: _saveTransaction,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _accentColor,
+                  minimumSize: const Size.fromHeight(52),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
                   ),
-                )
-                    : Text(isEditMode ? 'Update Transaction' : 'Add Transaction'),
+                ),
+                child: Text(
+                  isEditMode ? 'Update Transaction' : 'Save Transaction',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
               ),
 
-              // ── DELETE BUTTON (only shown in Edit mode) ───────────────────
-              // if (condition) widget  — renders widget only when condition is true
               if (isEditMode) ...[
                 const SizedBox(height: 12),
-                OutlinedButton.icon(
-                  onPressed: _isLoading ? null : _confirmDelete,
-                  icon: const Icon(Icons.delete_outline, color: AppTheme.danger),
-                  label: const Text(
-                    'Delete Transaction',
-                    style: TextStyle(color: AppTheme.danger),
-                  ),
-                  style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    side: const BorderSide(color: AppTheme.danger),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: _confirmDelete,
+                    icon: const Icon(Icons.delete_outline,
+                        color: AppTheme.expenseRed),
+                    label: const Text('Delete Transaction',
+                        style: TextStyle(color: AppTheme.expenseRed)),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size.fromHeight(50),
+                      side: const BorderSide(color: AppTheme.expenseRed),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14)),
                     ),
                   ),
                 ),
               ],
+              const SizedBox(height: 40),
             ],
           ),
         ),
@@ -315,144 +245,290 @@ class _AddEditTransactionScreenState extends State<AddEditTransactionScreen> {
     );
   }
 
-  // ── HELPER WIDGETS (extracted for cleaner build method) ────────────────────
-
+  // ─── TYPE TOGGLE (Expense / Income) ──────────────────────────────────────
   Widget _buildTypeToggle() {
     return Container(
-      decoration: BoxDecoration(
-        color: AppTheme.surface,
-        borderRadius: BorderRadius.circular(12),
-      ),
+      height: 52,
       padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: AppTheme.card,
+        borderRadius: BorderRadius.circular(14),
+      ),
       child: Row(
         children: [
-          // Expense toggle button
-          Expanded(child: _typeButton('Expense', true, Icons.arrow_upward, AppTheme.danger)),
-          // Income toggle button
-          Expanded(child: _typeButton('Income', false, Icons.arrow_downward, AppTheme.accent)),
+          _typeButton('Expense', true),
+          _typeButton('Income', false),
         ],
       ),
     );
   }
 
-  Widget _typeButton(String label, bool isExpenseType, IconData icon, Color color) {
-    final isSelected = _isExpense == isExpenseType;
-    return GestureDetector(
-      onTap: () => setState(() => _isExpense = isExpenseType),
-      child: AnimatedContainer(
-        // AnimatedContainer smoothly animates between property changes
-        duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        decoration: BoxDecoration(
-          color: isSelected ? color.withOpacity(0.2) : Colors.transparent,
-          borderRadius: BorderRadius.circular(8),
-          border: isSelected ? Border.all(color: color, width: 1.5) : null,
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, color: isSelected ? color : AppTheme.textSecondary, size: 18),
-            const SizedBox(width: 8),
-            Text(
-              label,
-              style: TextStyle(
-                color: isSelected ? color : AppTheme.textSecondary,
-                fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+  Widget _typeButton(String label, bool isExpense) {
+    final isSelected = _isExpense == isExpense;
+    final color = isExpense ? AppTheme.expenseRed : AppTheme.incomeGreen;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => _onTypeChanged(isExpense),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          decoration: BoxDecoration(
+            color: isSelected ? color : Colors.transparent,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          alignment: Alignment.center,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                isExpense ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded,
+                color: isSelected ? Colors.white : AppTheme.textSecond,
+                size: 16,
               ),
-            ),
-          ],
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  color: isSelected ? Colors.white : AppTheme.textSecond,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 14,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildCategorySelector() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'Category',
-          style: TextStyle(color: AppTheme.textSecondary, fontSize: 14),
-        ),
-        const SizedBox(height: 10),
-        // Wrap lays out children and wraps to next line when out of space
-        Wrap(
-          spacing: 8, // horizontal gap between chips
-          runSpacing: 8, // vertical gap between rows
-          children: AppCategories.predefined.map((category) {
-            // .map() transforms each item in a list
-            // Here we transform CategoryModel -> Widget
-            final isSelected = _selectedCategory == category.name;
-            return GestureDetector(
-              onTap: () => setState(() => _selectedCategory = category.name),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 150),
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: BoxDecoration(
-                  color: isSelected
-                      ? category.color.withOpacity(0.25)
-                      : AppTheme.surface,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                    color: isSelected ? category.color : Colors.transparent,
-                    width: 1.5,
+  // ─── CATEGORY GRID ────────────────────────────────────────────────────────
+  Widget _buildCategoryGrid(List<String> categoryNames) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: categoryNames.map((name) {
+        final cat = getCategoryByName(name, _isExpense);
+        final isSelected = _selectedCategory == name;
+        return GestureDetector(
+          onTap: () => setState(() => _selectedCategory = name),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 150),
+            padding:
+            const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: isSelected
+                  ? cat.color.withOpacity(0.2)
+                  : AppTheme.card,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: isSelected ? cat.color : AppTheme.divider,
+                width: isSelected ? 2 : 1,
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(cat.icon,
+                    color: isSelected ? cat.color : AppTheme.textSecond,
+                    size: 16),
+                const SizedBox(width: 6),
+                Text(
+                  name,
+                  style: TextStyle(
+                    color: isSelected ? cat.color : AppTheme.textSecond,
+                    fontSize: 13,
+                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
                   ),
                 ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min, // Don't take full width
-                  children: [
-                    Icon(category.icon,
-                        size: 16,
-                        color: isSelected ? category.color : AppTheme.textSecondary),
-                    const SizedBox(width: 6),
-                    Text(
-                      category.name,
-                      style: TextStyle(
-                        color: isSelected ? category.color : AppTheme.textSecondary,
-                        fontSize: 13,
-                        fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          }).toList(), // Convert Iterable<Widget> to List<Widget>
-        ),
-      ],
+              ],
+            ),
+          ),
+        );
+      }).toList(),
     );
   }
 
-  Widget _buildDatePicker() {
+  // ─── ADD CUSTOM CATEGORY ──────────────────────────────────────────────────
+  Widget _buildAddCustomCategoryButton(BuildContext context) {
+    return TextButton.icon(
+      onPressed: () => _showAddCategoryDialog(context),
+      icon: const Icon(Icons.add, size: 16),
+      label: const Text('Add Custom Category'),
+      style: TextButton.styleFrom(foregroundColor: _accentColor),
+    );
+  }
+
+  void _showAddCategoryDialog(BuildContext context) {
+    final nameController = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.card,
+        title: Text(
+          'New ${_isExpense ? 'Expense' : 'Income'} Category',
+          style: const TextStyle(color: AppTheme.textPrimary, fontSize: 17),
+        ),
+        content: TextField(
+          controller: nameController,
+          autofocus: true,
+          style: const TextStyle(color: AppTheme.textPrimary),
+          decoration: const InputDecoration(
+            hintText: 'Category name',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              final name = nameController.text.trim();
+              if (name.isNotEmpty) {
+                await context.read<TransactionProvider>().addCustomCategory(
+                  name: name,
+                  isExpense: _isExpense,
+                  color: _accentColor,
+                  icon: Icons.label_outline,
+                );
+                setState(() => _selectedCategory = name);
+                if (ctx.mounted) Navigator.pop(ctx);
+              }
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: _accentColor),
+            child: const Text('Add'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ─── DATE PICKER ──────────────────────────────────────────────────────────
+  Widget _buildDatePicker(BuildContext context) {
     return GestureDetector(
-      onTap: _pickDate,
+      onTap: () => _pickDate(context),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        padding:
+        const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         decoration: BoxDecoration(
-          color: AppTheme.surface,
+          color: AppTheme.card,
           borderRadius: BorderRadius.circular(12),
         ),
         child: Row(
           children: [
-            const Icon(Icons.calendar_today, color: AppTheme.textSecondary, size: 20),
+            Icon(Icons.calendar_today_outlined,
+                color: _accentColor, size: 20),
             const SizedBox(width: 12),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('Date', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-                const SizedBox(height: 2),
-                Text(
-                  // DateFormat from intl package formats DateTime to readable string
-                  DateFormat('EEEE, MMMM d, y').format(_selectedDate),
-                  style: const TextStyle(color: AppTheme.textPrimary, fontWeight: FontWeight.w500),
-                ),
-              ],
+            Text(
+              DateFormat('EEEE, dd MMMM yyyy').format(_selectedDate),
+              style: const TextStyle(
+                  color: AppTheme.textPrimary, fontSize: 14),
             ),
-            const Spacer(), // Takes all remaining space - pushes next widget to end
-            const Icon(Icons.chevron_right, color: AppTheme.textSecondary),
+            const Spacer(),
+            const Icon(Icons.chevron_right_rounded,
+                color: AppTheme.textSecond),
           ],
         ),
       ),
     );
+  }
+
+  Future<void> _pickDate(BuildContext context) async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedDate,
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now(),
+      builder: (context, child) => Theme(
+        data: Theme.of(context).copyWith(
+          colorScheme: ColorScheme.dark(
+            primary: _accentColor,
+            surface: AppTheme.card,
+          ),
+        ),
+        child: child!,
+      ),
+    );
+    if (picked != null) {
+      setState(() => _selectedDate = picked);
+    }
+  }
+
+  // ─── SECTION LABEL ────────────────────────────────────────────────────────
+  Widget _buildSectionLabel(String label) {
+    return Text(
+      label.toUpperCase(),
+      style: const TextStyle(
+        color: AppTheme.textSecond,
+        fontSize: 11,
+        fontWeight: FontWeight.w600,
+        letterSpacing: 1.2,
+      ),
+    );
+  }
+
+  // ─── SAVE ─────────────────────────────────────────────────────────────────
+  Future<void> _saveTransaction() async {
+    // Validate all fields — if any validator returns non-null, stop
+    if (!_formKey.currentState!.validate()) return;
+
+    final provider = context.read<TransactionProvider>();
+
+    if (isEditMode) {
+      await provider.updateTransaction(
+        id: widget.transaction!.id,
+        title: _titleController.text.trim(),
+        amount: double.parse(_amountController.text.trim()),
+        category: _selectedCategory,
+        date: _selectedDate,
+        isExpense: _isExpense,
+        note: _noteController.text.trim(),
+      );
+    } else {
+      await provider.addTransaction(
+        title: _titleController.text.trim(),
+        amount: double.parse(_amountController.text.trim()),
+        category: _selectedCategory,
+        date: _selectedDate,
+        isExpense: _isExpense,
+        note: _noteController.text.trim(),
+      );
+    }
+
+    if (mounted) Navigator.pop(context);
+  }
+
+  // ─── DELETE ───────────────────────────────────────────────────────────────
+  Future<void> _confirmDelete() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.card,
+        title: const Text('Delete Transaction',
+            style: TextStyle(color: AppTheme.textPrimary)),
+        content: const Text(
+          'This will permanently delete this transaction.',
+          style: TextStyle(color: AppTheme.textSecond),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style:
+            ElevatedButton.styleFrom(backgroundColor: AppTheme.expenseRed),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && mounted) {
+      await context
+          .read<TransactionProvider>()
+          .deleteTransaction(widget.transaction!.id);
+      if (mounted) Navigator.pop(context);
+    }
   }
 }
