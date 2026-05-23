@@ -58,7 +58,7 @@ A fully-featured personal finance app built with **Flutter** that helps users tr
 - Two FABs: separate Income (green) and Expense (red) quick-add buttons
 
 ## 📱 Screenshots
-<img width="811" height="441" alt="image" src="https://github.com/user-attachments/assets/0aea10a1-924b-40d2-8084-806120ce4033" />
+<img width="773" height="450" alt="image" src="https://github.com/user-attachments/assets/3249ae86-f460-48d8-aaad-98e9066f1e17" />
 <img width="774" height="455" alt="image" src="https://github.com/user-attachments/assets/db5fec7b-ed48-4cd1-bd5b-4a0a3aa4a150" />
 
 ---
